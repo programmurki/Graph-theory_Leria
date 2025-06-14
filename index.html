@@ -1,0 +1,800 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Графовый редактор</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background-color: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            padding: 20px;
+        }
+        
+        h1 {
+            text-align: center;
+            color: #333;
+        }
+        
+        .toolbar {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid #eee;
+        }
+        
+        button {
+            padding: 8px 16px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        
+        button:hover {
+            background-color: #45a049;
+        }
+        
+        button.active {
+            background-color: #2E7D32;
+        }
+        
+        .canvas-container {
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            overflow: hidden;
+            background-color: white;
+        }
+        
+        #graph-canvas {
+            display: block;
+            background-color: white;
+            cursor: default;
+        }
+        
+        .properties {
+            margin-top: 20px;
+            padding: 15px;
+            background-color: #f9f9f9;
+            border-radius: 4px;
+        }
+        
+        .property-group {
+            margin-bottom: 15px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        
+        input, select {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        
+        .status-bar {
+            margin-top: 15px;
+            padding: 10px;
+            background-color: #e9e9e9;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        
+        .context-menu {
+            position: absolute;
+            background-color: white;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+            z-index: 100;
+            display: none;
+        }
+        
+        .context-menu-item {
+            padding: 8px 15px;
+            cursor: pointer;
+        }
+        
+        .context-menu-item:hover {
+            background-color: #f0f0f0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Графовый редактор</h1>
+        
+        <div class="toolbar">
+            <button id="select-tool" class="active">Выбор (S)</button>
+            <button id="vertex-tool">Добавить вершину (V)</button>
+            <button id="edge-tool">Добавить ребро (E)</button>
+            <button id="delete-tool">Удалить (D)</button>
+            <button id="clear-btn">Очистить</button>
+            <button id="directed-toggle">Неориентированный</button>
+            <button id="export-btn">Экспорт</button>
+        </div>
+        
+        <div class="canvas-container">
+            <canvas id="graph-canvas" width="1160" height="600"></canvas>
+        </div>
+        
+        <div class="properties">
+            <div class="property-group">
+                <label for="vertex-label">Метка вершины:</label>
+                <input type="text" id="vertex-label" value="A">
+            </div>
+            <div class="property-group">
+                <label for="edge-weight">Вес ребра:</label>
+                <input type="number" id="edge-weight" value="1" min="1">
+            </div>
+        </div>
+        
+        <div class="status-bar" id="status-bar">
+            Готов к работе. Выберите инструмент.
+        </div>
+    </div>
+    
+    <div class="context-menu" id="context-menu">
+        <div class="context-menu-item" id="rename-item">Переименовать</div>
+        <div class="context-menu-item" id="delete-item">Удалить</div>
+        <div class="context-menu-item" id="change-weight-item">Изменить вес</div>
+    </div>
+
+    <script>
+        // Состояние приложения
+        const state = {
+            graph: {
+                vertices: [],
+                edges: [],
+                isDirected: false,
+                nextVertexId: 1,
+                nextEdgeId: 1
+            },
+            tools: {
+                activeTool: 'select',
+                selectedVertex: null,
+                selectedEdge: null,
+                tempEdge: null
+            },
+            ui: {
+                isDragging: false,
+                isDraggingVertex: false,
+                isCreatingEdge: false,
+                contextMenuTarget: null
+            }
+        };
+
+        // Элементы DOM
+        const dom = {
+            canvas: document.getElementById('graph-canvas'),
+            ctx: document.getElementById('graph-canvas').getContext('2d'),
+            selectTool: document.getElementById('select-tool'),
+            vertexTool: document.getElementById('vertex-tool'),
+            edgeTool: document.getElementById('edge-tool'),
+            deleteTool: document.getElementById('delete-tool'),
+            clearBtn: document.getElementById('clear-btn'),
+            directedToggle: document.getElementById('directed-toggle'),
+            exportBtn: document.getElementById('export-btn'),
+            vertexLabel: document.getElementById('vertex-label'),
+            edgeWeight: document.getElementById('edge-weight'),
+            statusBar: document.getElementById('status-bar'),
+            contextMenu: document.getElementById('context-menu'),
+            renameItem: document.getElementById('rename-item'),
+            deleteItem: document.getElementById('delete-item'),
+            changeWeightItem: document.getElementById('change-weight-item')
+        };
+
+        // Инициализация приложения
+        function init() {
+            setupEventListeners();
+            render();
+            updateStatus('Готов к работе. Выберите инструмент.');
+        }
+
+        // Настройка обработчиков событий
+        function setupEventListeners() {
+            // Инструменты
+            dom.selectTool.addEventListener('click', () => setActiveTool('select'));
+            dom.vertexTool.addEventListener('click', () => setActiveTool('vertex'));
+            dom.edgeTool.addEventListener('click', () => setActiveTool('edge'));
+            dom.deleteTool.addEventListener('click', () => setActiveTool('delete'));
+            
+            // Кнопки
+            dom.clearBtn.addEventListener('click', clearGraph);
+            dom.directedToggle.addEventListener('click', toggleDirected);
+            dom.exportBtn.addEventListener('click', exportGraph);
+            
+            // Контекстное меню
+            dom.renameItem.addEventListener('click', handleRename);
+            dom.deleteItem.addEventListener('click', handleDelete);
+            dom.changeWeightItem.addEventListener('click', handleChangeWeight);
+            
+            // Обработчики canvas
+            dom.canvas.addEventListener('mousedown', handleCanvasMouseDown);
+            dom.canvas.addEventListener('mousemove', handleCanvasMouseMove);
+            dom.canvas.addEventListener('mouseup', handleCanvasMouseUp);
+            dom.canvas.addEventListener('mouseleave', handleCanvasMouseLeave);
+            dom.canvas.addEventListener('dblclick', handleCanvasDoubleClick);
+            dom.canvas.addEventListener('contextmenu', handleContextMenu);
+            
+            // Горячие клавиши
+            document.addEventListener('keydown', handleKeyDown);
+            
+            // Закрытие контекстного меню при клике вне его
+            document.addEventListener('click', (e) => {
+                if (!dom.contextMenu.contains(e.target)) {
+                    dom.contextMenu.style.display = 'none';
+                }
+            });
+        }
+
+        // Установка активного инструмента
+        function setActiveTool(tool) {
+            state.tools.activeTool = tool;
+            
+            // Обновляем UI кнопок
+            dom.selectTool.classList.remove('active');
+            dom.vertexTool.classList.remove('active');
+            dom.edgeTool.classList.remove('active');
+            dom.deleteTool.classList.remove('active');
+            
+            switch (tool) {
+                case 'select':
+                    dom.selectTool.classList.add('active');
+                    updateStatus('Режим выбора: щелкните по элементу для выбора');
+                    break;
+                case 'vertex':
+                    dom.vertexTool.classList.add('active');
+                    updateStatus('Режим добавления вершин: щелкните на холсте, чтобы добавить вершину');
+                    break;
+                case 'edge':
+                    dom.edgeTool.classList.add('active');
+                    updateStatus('Режим добавления ребер: щелкните по вершинам, чтобы соединить их');
+                    break;
+                case 'delete':
+                    dom.deleteTool.classList.add('active');
+                    updateStatus('Режим удаления: щелкните по элементу для удаления');
+                    break;
+            }
+            
+            // Сброс временного состояния
+            state.tools.tempEdge = null;
+            state.ui.isCreatingEdge = false;
+            render();
+        }
+
+        // Переключение типа графа (ориентированный/неориентированный)
+        function toggleDirected() {
+            state.graph.isDirected = !state.graph.isDirected;
+            dom.directedToggle.textContent = state.graph.isDirected ? 'Ориентированный' : 'Неориентированный';
+            updateStatus(`Граф теперь ${state.graph.isDirected ? 'ориентированный' : 'неориентированный'}`);
+            render();
+        }
+
+        // Обработка нажатия кнопки мыши на canvas
+        function handleCanvasMouseDown(e) {
+            e.preventDefault();
+            const pos = getCanvasCoordinates(e);
+            
+            // Правая кнопка мыши - контекстное меню
+            if (e.button === 2) return;
+            
+            // Поиск элемента под курсором
+            const vertex = findVertexAt(pos.x, pos.y);
+            const edge = findEdgeAt(pos.x, pos.y);
+            
+            // Обработка в зависимости от активного инструмента
+            switch (state.tools.activeTool) {
+                case 'select':
+                    if (vertex) {
+                        state.tools.selectedVertex = vertex.id;
+                        state.tools.selectedEdge = null;
+                        state.ui.isDraggingVertex = true;
+                    } else if (edge) {
+                        state.tools.selectedEdge = edge.id;
+                        state.tools.selectedVertex = null;
+                    } else {
+                        state.tools.selectedVertex = null;
+                        state.tools.selectedEdge = null;
+                    }
+                    break;
+                    
+                case 'vertex':
+                    addVertex(pos.x, pos.y);
+                    break;
+                    
+                case 'edge':
+                    if (vertex) {
+                        if (!state.ui.isCreatingEdge) {
+                            state.tools.tempEdge = { 
+                                from: vertex.id, 
+                                x1: vertex.x, 
+                                y1: vertex.y, 
+                                x2: pos.x, 
+                                y2: pos.y 
+                            };
+                            state.ui.isCreatingEdge = true;
+                        } else {
+                            // Проверяем, что это другая вершина
+                            if (vertex.id !== state.tools.tempEdge.from) {
+                                addEdge(state.tools.tempEdge.from, vertex.id);
+                            }
+                            state.tools.tempEdge = null;
+                            state.ui.isCreatingEdge = false;
+                        }
+                    }
+                    break;
+                    
+                case 'delete':
+                    if (vertex) {
+                        deleteVertex(vertex.id);
+                    } else if (edge) {
+                        deleteEdge(edge.id);
+                    }
+                    break;
+            }
+            
+            render();
+        }
+
+        // Обработка перемещения мыши на canvas
+        function handleCanvasMouseMove(e) {
+            const pos = getCanvasCoordinates(e);
+            
+            // Перемещение вершины
+            if (state.ui.isDraggingVertex && state.tools.selectedVertex) {
+                const vertex = state.graph.vertices.find(v => v.id === state.tools.selectedVertex);
+                if (vertex) {
+                    vertex.x = pos.x;
+                    vertex.y = pos.y;
+                    render();
+                }
+                return;
+            }
+            
+            // Создание ребра
+            if (state.ui.isCreatingEdge && state.tools.tempEdge) {
+                state.tools.tempEdge.x2 = pos.x;
+                state.tools.tempEdge.y2 = pos.y;
+                render();
+                return;
+            }
+            
+            // Изменение курсора при наведении
+            const vertex = findVertexAt(pos.x, pos.y);
+            const edge = findEdgeAt(pos.x, pos.y);
+            
+            if (vertex) {
+                dom.canvas.style.cursor = 'pointer';
+            } else if (edge) {
+                dom.canvas.style.cursor = 'pointer';
+            } else {
+                dom.canvas.style.cursor = 'default';
+            }
+        }
+
+        // Обработка отпускания кнопки мыши на canvas
+        function handleCanvasMouseUp() {
+            state.ui.isDraggingVertex = false;
+        }
+
+        // Обработка выхода мыши за пределы canvas
+        function handleCanvasMouseLeave() {
+            state.ui.isDraggingVertex = false;
+            state.ui.isCreatingEdge = false;
+            state.tools.tempEdge = null;
+            dom.canvas.style.cursor = 'default';
+            render();
+        }
+
+        // Обработка двойного клика на canvas
+        function handleCanvasDoubleClick(e) {
+            if (state.tools.activeTool === 'select') {
+                const pos = getCanvasCoordinates(e);
+                const vertex = findVertexAt(pos.x, pos.y);
+                
+                if (vertex) {
+                    const newLabel = prompt('Введите новое имя вершины:', vertex.label);
+                    if (newLabel !== null) {
+                        vertex.label = newLabel;
+                        render();
+                        updateStatus(`Вершина переименована в "${newLabel}"`);
+                    }
+                }
+            }
+        }
+
+        // Обработка контекстного меню
+        function handleContextMenu(e) {
+            e.preventDefault();
+            const pos = getCanvasCoordinates(e);
+            
+            const vertex = findVertexAt(pos.x, pos.y);
+            const edge = findEdgeAt(pos.x, pos.y);
+            
+            if (vertex || edge) {
+                state.ui.contextMenuTarget = vertex || edge;
+                
+                // Показываем только соответствующие пункты меню
+                dom.renameItem.style.display = vertex ? 'block' : 'none';
+                dom.changeWeightItem.style.display = edge ? 'block' : 'none';
+                
+                // Позиционируем меню
+                dom.contextMenu.style.display = 'block';
+                dom.contextMenu.style.left = `${e.clientX}px`;
+                dom.contextMenu.style.top = `${e.clientY}px`;
+            }
+        }
+
+        // Обработка переименования из контекстного меню
+        function handleRename() {
+            dom.contextMenu.style.display = 'none';
+            
+            if (state.ui.contextMenuTarget && state.ui.contextMenuTarget.label !== undefined) {
+                const newLabel = prompt('Введите новое имя вершины:', state.ui.contextMenuTarget.label);
+                if (newLabel !== null) {
+                    state.ui.contextMenuTarget.label = newLabel;
+                    render();
+                    updateStatus(`Вершина переименована в "${newLabel}"`);
+                }
+            }
+        }
+
+        // Обработка удаления из контекстного меню
+        function handleDelete() {
+            dom.contextMenu.style.display = 'none';
+            
+            if (state.ui.contextMenuTarget) {
+                if (state.ui.contextMenuTarget.id !== undefined) { // Вершина
+                    deleteVertex(state.ui.contextMenuTarget.id);
+                } else if (state.ui.contextMenuTarget.edgeId !== undefined) { // Ребро
+                    deleteEdge(state.ui.contextMenuTarget.edgeId);
+                }
+            }
+        }
+
+        // Обработка изменения веса из контекстного меню
+        function handleChangeWeight() {
+            dom.contextMenu.style.display = 'none';
+            
+            if (state.ui.contextMenuTarget && state.ui.contextMenuTarget.weight !== undefined) {
+                const newWeight = prompt('Введите новый вес ребра:', state.ui.contextMenuTarget.weight);
+                if (newWeight !== null && !isNaN(newWeight)) {
+                    state.ui.contextMenuTarget.weight = parseInt(newWeight) || 1;
+                    render();
+                    updateStatus(`Вес ребра изменен на ${state.ui.contextMenuTarget.weight}`);
+                }
+            }
+        }
+
+        // Обработка горячих клавиш
+        function handleKeyDown(e) {
+            switch (e.key.toLowerCase()) {
+                case 's':
+                    setActiveTool('select');
+                    break;
+                case 'v':
+                    setActiveTool('vertex');
+                    break;
+                case 'e':
+                    setActiveTool('edge');
+                    break;
+                case 'd':
+                    setActiveTool('delete');
+                    break;
+                case 'delete':
+                    if (state.tools.selectedVertex) {
+                        deleteVertex(state.tools.selectedVertex);
+                    } else if (state.tools.selectedEdge) {
+                        deleteEdge(state.tools.selectedEdge);
+                    }
+                    break;
+            }
+        }
+
+        // Добавить вершину
+        function addVertex(x, y) {
+            const label = dom.vertexLabel.value || `V${state.graph.nextVertexId}`;
+            const vertex = {
+                id: state.graph.nextVertexId++,
+                x: x,
+                y: y,
+                label: label
+            };
+            
+            state.graph.vertices.push(vertex);
+            render();
+            updateStatus(`Добавлена вершина "${label}"`);
+        }
+
+        // Удалить вершину
+        function deleteVertex(id) {
+            const vertex = state.graph.vertices.find(v => v.id === id);
+            if (!vertex) return;
+            
+            // Удаляем все связанные ребра
+            state.graph.edges = state.graph.edges.filter(e => e.from !== id && e.to !== id);
+            
+            // Удаляем вершину
+            state.graph.vertices = state.graph.vertices.filter(v => v.id !== id);
+            
+            render();
+            updateStatus(`Удалена вершина "${vertex.label}" и связанные ребра`);
+        }
+
+        // Добавить ребро
+        function addEdge(from, to) {
+            // Проверяем, что ребро не существует
+            const exists = state.graph.edges.some(e => 
+                (e.from === from && e.to === to) || (!state.graph.isDirected && e.from === to && e.to === from)
+            );
+            
+            if (exists) {
+                updateStatus('Такое ребро уже существует', 'error');
+                return;
+            }
+            
+            const weight = parseInt(dom.edgeWeight.value) || 1;
+            const edge = {
+                edgeId: state.graph.nextEdgeId++,
+                from: from,
+                to: to,
+                weight: weight
+            };
+            
+            state.graph.edges.push(edge);
+            render();
+            
+            const fromVertex = state.graph.vertices.find(v => v.id === from);
+            const toVertex = state.graph.vertices.find(v => v.id === to);
+            updateStatus(`Добавлено ребро ${fromVertex.label} → ${toVertex.label} (вес: ${weight})`);
+        }
+
+        // Удалить ребро
+        function deleteEdge(edgeId) {
+            const edge = state.graph.edges.find(e => e.edgeId === edgeId);
+            if (!edge) return;
+            
+            state.graph.edges = state.graph.edges.filter(e => e.edgeId !== edgeId);
+            render();
+            
+            const fromVertex = state.graph.vertices.find(v => v.id === edge.from);
+            const toVertex = state.graph.vertices.find(v => v.id === edge.to);
+            updateStatus(`Удалено ребро ${fromVertex.label} → ${toVertex.label}`);
+        }
+
+        // Найти вершину по координатам
+        function findVertexAt(x, y) {
+            const radius = 20;
+            for (let i = state.graph.vertices.length - 1; i >= 0; i--) {
+                const vertex = state.graph.vertices[i];
+                const distance = Math.sqrt(Math.pow(vertex.x - x, 2) + Math.pow(vertex.y - y, 2));
+                if (distance <= radius) {
+                    return vertex;
+                }
+            }
+            return null;
+        }
+
+        // Найти ребро по координатам
+        function findEdgeAt(x, y) {
+            const threshold = 5;
+            
+            for (let i = state.graph.edges.length - 1; i >= 0; i--) {
+                const edge = state.graph.edges[i];
+                const fromVertex = state.graph.vertices.find(v => v.id === edge.from);
+                const toVertex = state.graph.vertices.find(v => v.id === edge.to);
+                
+                if (!fromVertex || !toVertex) continue;
+                
+                // Проверка для линии
+                if (isPointNearLine(x, y, fromVertex.x, fromVertex.y, toVertex.x, toVertex.y, threshold)) {
+                    return { ...edge, edgeId: edge.edgeId };
+                }
+            }
+            return null;
+        }
+
+        // Проверка близости точки к линии
+        function isPointNearLine(px, py, x1, y1, x2, y2, threshold) {
+            const dx = x2 - x1;
+            const dy = y2 - y1;
+            const length = Math.sqrt(dx * dx + dy * dy);
+            
+            if (length === 0) return false; // Линия нулевой длины
+            
+            const u = ((px - x1) * dx + (py - y1) * dy) / (length * length);
+            
+            if (u < 0 || u > 1) return false;
+            
+            const closestX = x1 + u * dx;
+            const closestY = y1 + u * dy;
+            const distance = Math.sqrt(Math.pow(px - closestX, 2) + Math.pow(py - closestY, 2));
+            
+            return distance <= threshold;
+        }
+
+        // Получить координаты на canvas
+        function getCanvasCoordinates(e) {
+            const rect = dom.canvas.getBoundingClientRect();
+            return {
+                x: e.clientX - rect.left,
+                y: e.clientY - rect.top
+            };
+        }
+
+        // Отрисовка графа
+        function render() {
+            // Очистка canvas
+            dom.ctx.clearRect(0, 0, dom.canvas.width, dom.canvas.height);
+            
+            // Рисуем ребра
+            state.graph.edges.forEach(edge => {
+                const fromVertex = state.graph.vertices.find(v => v.id === edge.from);
+                const toVertex = state.graph.vertices.find(v => v.id === edge.to);
+                
+                if (!fromVertex || !toVertex) return;
+                
+                // Стиль для выбранного ребра
+                if (edge.edgeId === state.tools.selectedEdge) {
+                    dom.ctx.strokeStyle = '#e74c3c';
+                    dom.ctx.lineWidth = 3;
+                } else {
+                    dom.ctx.strokeStyle = '#3498db';
+                    dom.ctx.lineWidth = 2;
+                }
+                
+                // Рисуем линию
+                dom.ctx.beginPath();
+                dom.ctx.moveTo(fromVertex.x, fromVertex.y);
+                dom.ctx.lineTo(toVertex.x, toVertex.y);
+                dom.ctx.stroke();
+                
+                // Рисуем стрелку для ориентированного графа
+                if (state.graph.isDirected) {
+                    drawArrow(dom.ctx, fromVertex.x, fromVertex.y, toVertex.x, toVertex.y);
+                }
+                
+                // Рисуем вес ребра
+                const midX = (fromVertex.x + toVertex.x) / 2;
+                const midY = (fromVertex.y + toVertex.y) / 2;
+                
+                dom.ctx.fillStyle = '#2c3e50';
+                dom.ctx.font = '14px Arial';
+                dom.ctx.textAlign = 'center';
+                dom.ctx.textBaseline = 'middle';
+                dom.ctx.fillText(edge.weight.toString(), midX, midY);
+            });
+            
+            // Рисуем временное ребро (при создании)
+            if (state.tools.tempEdge) {
+                dom.ctx.strokeStyle = '#3498db';
+                dom.ctx.lineWidth = 2;
+                dom.ctx.setLineDash([5, 5]);
+                
+                dom.ctx.beginPath();
+                dom.ctx.moveTo(state.tools.tempEdge.x1, state.tools.tempEdge.y1);
+                dom.ctx.lineTo(state.tools.tempEdge.x2, state.tools.tempEdge.y2);
+                dom.ctx.stroke();
+                
+                dom.ctx.setLineDash([]);
+            }
+            
+            // Рисуем вершины
+            state.graph.vertices.forEach(vertex => {
+                // Стиль для выбранной вершины
+                if (vertex.id === state.tools.selectedVertex) {
+                    dom.ctx.fillStyle = '#e74c3c';
+                } else {
+                    dom.ctx.fillStyle = '#2c3e50';
+                }
+                
+                // Рисуем круг вершины
+                dom.ctx.beginPath();
+                dom.ctx.arc(vertex.x, vertex.y, 15, 0, Math.PI * 2);
+                dom.ctx.fill();
+                
+                // Рисуем метку вершины
+                dom.ctx.fillStyle = 'white';
+                dom.ctx.font = 'bold 14px Arial';
+                dom.ctx.textAlign = 'center';
+                dom.ctx.textBaseline = 'middle';
+                dom.ctx.fillText(vertex.label, vertex.x, vertex.y);
+            });
+        }
+
+        // Рисование стрелки
+        function drawArrow(ctx, fromX, fromY, toX, toY) {
+            const headLength = 15;
+            const angle = Math.atan2(toY - fromY, toX - fromX);
+            
+            // Уменьшаем длину стрелки, чтобы она не перекрывала вершину
+            const newToX = toX - 15 * Math.cos(angle);
+            const newToY = toY - 15 * Math.sin(angle);
+            
+            ctx.beginPath();
+            ctx.moveTo(newToX, newToY);
+            ctx.lineTo(
+                newToX - headLength * Math.cos(angle - Math.PI / 6),
+                newToY - headLength * Math.sin(angle - Math.PI / 6)
+            );
+            ctx.moveTo(newToX, newToY);
+            ctx.lineTo(
+                newToX - headLength * Math.cos(angle + Math.PI / 6),
+                newToY - headLength * Math.sin(angle + Math.PI / 6)
+            );
+            ctx.stroke();
+        }
+
+        // Обновление статус-бара
+        function updateStatus(message, type = 'info') {
+            dom.statusBar.textContent = message;
+            
+            // Можно добавить разные стили для разных типов сообщений
+            if (type === 'error') {
+                dom.statusBar.style.color = '#e74c3c';
+            } else {
+                dom.statusBar.style.color = '#333';
+            }
+        }
+
+        // Очистить граф
+        function clearGraph() {
+            if (confirm('Вы уверены, что хотите очистить граф? Все данные будут потеряны.')) {
+                state.graph.vertices = [];
+                state.graph.edges = [];
+                state.graph.nextVertexId = 1;
+                state.graph.nextEdgeId = 1;
+                state.tools.selectedVertex = null;
+                state.tools.selectedEdge = null;
+                state.tools.tempEdge = null;
+                
+                render();
+                updateStatus('Граф очищен');
+            }
+        }
+
+        // Экспорт графа
+        function exportGraph() {
+            const graphData = {
+                vertices: state.graph.vertices.map(v => ({ id: v.id, label: v.label, x: v.x, y: v.y })),
+                edges: state.graph.edges.map(e => ({ from: e.from, to: e.to, weight: e.weight })),
+                isDirected: state.graph.isDirected
+            };
+            
+            const dataStr = JSON.stringify(graphData, null, 2);
+            const dataUri = 'data:application/json;charset=utf-8,'+ encodeURIComponent(dataStr);
+            
+            const exportName = 'graph_' + new Date().toISOString().slice(0, 10) + '.json';
+            
+            const linkElement = document.createElement('a');
+            linkElement.setAttribute('href', dataUri);
+            linkElement.setAttribute('download', exportName);
+            linkElement.click();
+            
+            updateStatus(`Граф экспортирован в файл ${exportName}`);
+        }
+
+        // Запуск приложения
+        init();
+    </script>
+</body>
+</html>
